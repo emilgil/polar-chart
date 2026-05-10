@@ -16,9 +16,9 @@
  *   speed_unit: m/s                       # optional: "m/s" | "km/h" | "mph" | "knop"
  *   language: sv                          # optional: "sv" | "en"
  *                                         # defaults to HA locale, falls back to "sv"
- *   show_max_wind: false                  # optional: highlight max wind in current view
- *   show_wind_rose: false                 # optional: frequency-of-direction overlay behind spiral
  *   view_mode: spiral                     # optional: "spiral" (default) | "daily"
+ *
+ * Toggle buttons in the controls row enable/disable max-wind marker and wind-rose overlay.
  *
  * No ha_url or ha_token needed — auth is handled automatically via the Lovelace hass object.
  * Speed unit is auto-detected from sensor's unit_of_measurement attribute.
@@ -80,6 +80,8 @@ const I18N = {
     unitName:    { 'm/s': 'm/s', 'km/h': 'km/h', 'mph': 'mph', 'knop': 'knop' },
     maxWind:     'Maxvind',
     windRose:    'Vindros',
+    maxWindBtn:  'Visa maxvind',
+    windRoseBtn: 'Visa vindros',
     today:       'Idag',
     days:        'dygn',
     modeSpiral:  'Spiral',
@@ -100,6 +102,8 @@ const I18N = {
     unitName:    { 'm/s': 'm/s', 'km/h': 'km/h', 'mph': 'mph', 'knop': 'knots' },
     maxWind:     'Max wind',
     windRose:    'Wind rose',
+    maxWindBtn:  'Show max wind',
+    windRoseBtn: 'Show wind rose',
     today:       'Today',
     days:        'days',
     modeSpiral:  'Spiral',
@@ -209,12 +213,12 @@ class PolarWindCard extends HTMLElement {
       num_points: Number(config.num_points) || 100,
       speed_unit: config.speed_unit, // possibly undefined; resolved in set hass()
       language: config.language,     // possibly undefined; resolved in set hass()
-      show_max_wind: !!config.show_max_wind,
-      show_wind_rose: !!config.show_wind_rose,
       view_mode,
     };
 
     this._viewMode = view_mode;
+    this._showMaxWind = false;
+    this._showWindRose = false;
 
     this._viewHours = this._config.hours;
     this._cache = { raw: null, fetchedAt: null, fetchedHours: null };
@@ -257,6 +261,7 @@ class PolarWindCard extends HTMLElement {
 
   disconnectedCallback() {
     clearInterval(this._interval);
+    this._stopMaxWindAnimation();
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
@@ -285,6 +290,10 @@ class PolarWindCard extends HTMLElement {
           font-size: 13px;
         }
         #pw-controls button:hover { background: #2563eb; }
+        #pw-maxwind, #pw-windrose, #pw-mode { background: #444; }
+        #pw-maxwind:hover, #pw-windrose:hover, #pw-mode:hover { background: #555; }
+        #pw-maxwind.active, #pw-windrose.active { background: #3b82f6; }
+        #pw-maxwind.active:hover, #pw-windrose.active:hover { background: #2563eb; }
         #pw-canvas { display: block; width: 100%; aspect-ratio: 1/1; cursor: crosshair; }
       </style>
       <div id="pw-card">
@@ -292,6 +301,8 @@ class PolarWindCard extends HTMLElement {
           <label id="pw-label-hours">_<input id="pw-hours" type="number" min="0.5" max="168" step="0.5"></label>
           <label id="pw-label-points">_<input id="pw-points" type="number" min="10" max="500"></label>
           <button id="pw-apply" title="">🔃</button>
+          <button id="pw-maxwind" title="">⚡</button>
+          <button id="pw-windrose" title="">🌹</button>
           <button id="pw-mode" title="Byt visningsläge / Toggle view mode">🔄</button>
         </div>
         <canvas id="pw-canvas"></canvas>
@@ -302,6 +313,8 @@ class PolarWindCard extends HTMLElement {
     const hoursInput = sr.getElementById('pw-hours');
     const pointsInput = sr.getElementById('pw-points');
     const applyBtn = sr.getElementById('pw-apply');
+    const maxwindBtn = sr.getElementById('pw-maxwind');
+    const windroseBtn = sr.getElementById('pw-windrose');
     const modeBtn = sr.getElementById('pw-mode');
     const canvas = sr.getElementById('pw-canvas');
 
@@ -333,6 +346,23 @@ class PolarWindCard extends HTMLElement {
       this._redrawFromCache();
     });
 
+    maxwindBtn.addEventListener('click', () => {
+      this._showMaxWind = !this._showMaxWind;
+      maxwindBtn.classList.toggle('active', this._showMaxWind);
+      if (this._showMaxWind) {
+        this._startMaxWindAnimation();
+      } else {
+        this._stopMaxWindAnimation();
+        this._redrawFromCache();
+      }
+    });
+
+    windroseBtn.addEventListener('click', () => {
+      this._showWindRose = !this._showWindRose;
+      windroseBtn.classList.toggle('active', this._showWindRose);
+      this._redrawFromCache();
+    });
+
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
@@ -352,6 +382,28 @@ class PolarWindCard extends HTMLElement {
     sr.getElementById('pw-label-hours').firstChild.textContent = t.hoursLabel + ': ';
     sr.getElementById('pw-label-points').firstChild.textContent = t.pointsLabel + ': ';
     sr.getElementById('pw-apply').title = t.applyButton;
+    sr.getElementById('pw-maxwind').title = t.maxWindBtn;
+    sr.getElementById('pw-windrose').title = t.windRoseBtn;
+  }
+
+  _startMaxWindAnimation() {
+    if (this._maxWindRaf) return;
+    const tick = () => {
+      if (!this._showMaxWind) {
+        this._maxWindRaf = null;
+        return;
+      }
+      this._draw();
+      this._maxWindRaf = requestAnimationFrame(tick);
+    };
+    this._maxWindRaf = requestAnimationFrame(tick);
+  }
+
+  _stopMaxWindAnimation() {
+    if (this._maxWindRaf) {
+      cancelAnimationFrame(this._maxWindRaf);
+      this._maxWindRaf = null;
+    }
   }
 
   async _startLoading() {
@@ -558,7 +610,7 @@ class PolarWindCard extends HTMLElement {
     }
 
     // 2b. Wind rose overlay — drawn under compass lines and data points.
-    if (this._config.show_wind_rose && this._cache.raw && this._cache.raw.length > 0) {
+    if (this._showWindRose && this._cache.raw && this._cache.raw.length > 0) {
       const roseBuckets = this._rebucket(this._cache.raw, this._viewHours, this._config.num_points);
       if (roseBuckets.length > 0) {
         const numSectors = 16;
@@ -711,9 +763,19 @@ class PolarWindCard extends HTMLElement {
       }
 
       // 5b. Max wind marker (drawn over dots so it stands out)
-      if (this._config.show_max_wind) {
+      if (this._showMaxWind) {
         const max = _findMaxPoint(screen);
         if (max && max.r >= 0 && max.r <= 1) {
+          // Pulse ring (animated, fades out as it grows from 10px to 18px)
+          const phase = (performance.now() % 2000) / 2000;
+          const pulseRadius = 10 + phase * 8;
+          const pulseAlpha = 0.6 * (1 - phase);
+          ctx.strokeStyle = `rgba(255,255,255,${pulseAlpha.toFixed(3)})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(max.x, max.y, pulseRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
           // Static outer ring
           ctx.strokeStyle = 'rgba(255,255,255,0.9)';
           ctx.lineWidth = 1.5;
