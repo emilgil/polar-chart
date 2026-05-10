@@ -291,7 +291,7 @@ class PolarWindCard extends HTMLElement {
         <div id="pw-controls">
           <label id="pw-label-hours">_<input id="pw-hours" type="number" min="0.5" max="168" step="0.5"></label>
           <label id="pw-label-points">_<input id="pw-points" type="number" min="10" max="500"></label>
-          <button id="pw-apply"></button>
+          <button id="pw-apply" title="">🔃</button>
           <button id="pw-mode" title="Byt visningsläge / Toggle view mode">🔄</button>
         </div>
         <canvas id="pw-canvas"></canvas>
@@ -351,7 +351,7 @@ class PolarWindCard extends HTMLElement {
     if (!sr) return;
     sr.getElementById('pw-label-hours').firstChild.textContent = t.hoursLabel + ': ';
     sr.getElementById('pw-label-points').firstChild.textContent = t.pointsLabel + ': ';
-    sr.getElementById('pw-apply').textContent = t.applyButton;
+    sr.getElementById('pw-apply').title = t.applyButton;
   }
 
   async _startLoading() {
