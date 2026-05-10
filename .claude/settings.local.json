@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check C:/temp/github/claude/polar-wind-card/polar-wind-card.js)",
+      "Bash(scp *)",
+      "Bash(ssh hassio *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
