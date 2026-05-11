@@ -1,26 +1,26 @@
 /*
- * polar-wind-card.js — Home Assistant Lovelace custom card
+ * polar-chart.js — Home Assistant Lovelace custom card
  *
  * Visualises any two HA sensors as a polar time-spiral:
  *   angle (required)  → angular position
  *   color (optional)  → dot color via a configurable palette
  *
  * INSTALLATION
- * 1. Copy this file to /config/www/polar-wind-card.js
+ * 1. Copy this file to /config/www/polar-chart.js
  * 2. In Lovelace: Settings → Dashboards → Resources → Add resource
- *      URL:  /local/polar-wind-card.js
+ *      URL:  /local/polar-chart.js
  *      Type: JavaScript module
  * 3. Reload the browser, then add a card.
  *
  * BACKWARDS COMPATIBLE — legacy wind config keeps working unchanged:
  *
- *   type: custom:polar-wind-card
+ *   type: custom:polar-chart
  *   bearing_sensor: sensor.your_bearing
  *   speed_sensor:   sensor.your_speed
  *
  * GENERIC config:
  *
- *   type: custom:polar-wind-card
+ *   type: custom:polar-chart
  *   angle:
  *     sensor: sensor.x
  *     min: 0
@@ -208,17 +208,17 @@ function _resolveColorUnit(config, hass) {
 }
 
 function _normalizeConfig(config) {
-  if (!config) throw new Error('polar-wind-card: missing config');
+  if (!config) throw new Error('polar-chart: missing config');
 
   const isLegacy = !!(config.bearing_sensor || config.speed_sensor);
 
   if (isLegacy) {
     if (!config.bearing_sensor) {
-      throw new Error('polar-wind-card: bearing_sensor is required when speed_sensor is set');
+      throw new Error('polar-chart: bearing_sensor is required when speed_sensor is set');
     }
     if (config.speed_unit !== undefined && !(config.speed_unit in TO_MS)) {
       throw new Error(
-        `polar-wind-card: invalid speed_unit "${config.speed_unit}". ` +
+        `polar-chart: invalid speed_unit "${config.speed_unit}". ` +
         `Allowed: ${Object.keys(TO_MS).join(', ')}`
       );
     }
@@ -254,33 +254,33 @@ function _normalizeConfig(config) {
   };
 }
 
-class PolarWindCard extends HTMLElement {
+class PolarChart extends HTMLElement {
   setConfig(config) {
     const cfg = _normalizeConfig(config);
 
     if (!cfg.angle || !cfg.angle.sensor) {
-      throw new Error('polar-wind-card: angle.sensor is required');
+      throw new Error('polar-chart: angle.sensor is required');
     }
     if (cfg.angle.min == null || cfg.angle.max == null) {
-      throw new Error('polar-wind-card: angle.min and angle.max are required');
+      throw new Error('polar-chart: angle.min and angle.max are required');
     }
     if (cfg.angle.min >= cfg.angle.max) {
-      throw new Error('polar-wind-card: angle.min must be less than angle.max');
+      throw new Error('polar-chart: angle.min must be less than angle.max');
     }
     if (cfg.color !== undefined) {
       if (!cfg.color.sensor) {
-        throw new Error('polar-wind-card: color.sensor is required when color block is present');
+        throw new Error('polar-chart: color.sensor is required when color block is present');
       }
       if (!Array.isArray(cfg.color.palette) || cfg.color.palette.length < 2) {
-        throw new Error('polar-wind-card: color.palette must have at least 2 entries');
+        throw new Error('polar-chart: color.palette must have at least 2 entries');
       }
       if (cfg.color.min == null || cfg.color.max == null) {
-        throw new Error('polar-wind-card: color.min and color.max are required');
+        throw new Error('polar-chart: color.min and color.max are required');
       }
     }
     if (cfg.language !== undefined && !(cfg.language in I18N)) {
       throw new Error(
-        `polar-wind-card: invalid language "${cfg.language}". ` +
+        `polar-chart: invalid language "${cfg.language}". ` +
         `Allowed: ${Object.keys(I18N).join(', ')}`
       );
     }
@@ -289,7 +289,7 @@ class PolarWindCard extends HTMLElement {
     let view_mode = cfg.view_mode || 'spiral';
     if (view_mode !== 'spiral' && view_mode !== 'daily') {
       throw new Error(
-        `polar-wind-card: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
+        `polar-chart: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
       );
     }
     if (view_mode === 'daily' && !cfg._isLegacyWind) {
@@ -559,7 +559,7 @@ class PolarWindCard extends HTMLElement {
       this._cache.fetchedAt = Date.now();
       this._fetchError = false;
     } catch (err) {
-      console.error('polar-wind-card: fetch failed', err);
+      console.error('polar-chart: fetch failed', err);
       if (!this._cache.raw) this._fetchError = true;
     } finally {
       this._fetching = false;
@@ -1089,11 +1089,11 @@ class PolarWindCard extends HTMLElement {
   }
 }
 
-customElements.define('polar-wind-card', PolarWindCard);
+customElements.define('polar-chart', PolarChart);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'polar-wind-card',
-  name: 'Polar Wind Card',
+  type: 'polar-chart',
+  name: 'Polar Chart',
   description: 'Polar time-spiral visualisation of any two HA sensors',
 });

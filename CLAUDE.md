@@ -8,14 +8,14 @@ Home Assistant Lovelace custom card that displays wind history as a polar spiral
 
 ## Key Files
 
-- `polar-wind-card.js` - The custom card implementation (deploy to `/config/www/`)
+- `polar-chart.js` - The custom card implementation (deploy to `/config/www/`)
 - `polar-wind-card-spec.md` - Detailed implementation specification with acceptance criteria
 
 ## Development Commands
 
 Deploy to Home Assistant:
 ```bash
-scp polar-wind-card.js hassio:/config/www/
+scp polar-chart.js hassio:/config/www/
 ```
 
 The `hassio` alias is defined in `~/.ssh/config` (HostName 192.168.1.97, User root, IdentityFile id_ed25519).
@@ -60,7 +60,7 @@ this._interval     // auto-refresh handle
 ## Configuration (YAML)
 
 ```yaml
-type: custom:polar-wind-card
+type: custom:polar-chart
 ha_url: http://192.168.1.97:8123        # required
 ha_token: YOUR_LONG_LIVED_TOKEN_HERE    # required
 bearing_sensor: sensor.wind_bearing     # required, degrees 0-360

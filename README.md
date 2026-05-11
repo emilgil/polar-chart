@@ -1,4 +1,4 @@
-# polar-wind-card
+# polar-chart
 
 A Home Assistant Lovelace custom card that displays wind history as a polar spiral.
 Wind direction determines the angle, time determines the radius (center = oldest, edge = now),
@@ -21,7 +21,7 @@ and wind speed determines the color of each data point.
 ### 1. Copy the card file to Home Assistant
 
 ```bash
-scp polar-wind-card.js hassio:/config/www/
+scp polar-chart.js hassio:/config/www/
 ```
 
 (Replace `hassio` with your own SSH alias / `user@host:path`, or copy via Samba / HA File Editor.)
@@ -32,7 +32,7 @@ In Home Assistant: **Settings → Dashboards → (three-dot menu) → Resources 
 
 | Field | Value |
 |-------|-------|
-| URL   | `/local/polar-wind-card.js?v=1` |
+| URL   | `/local/polar-chart.js?v=1` |
 | Type  | JavaScript module |
 
 The `?v=1` suffix lets you bypass aggressive browser cache after deploys — bump it to `?v=2`, `?v=3`, etc. each time the JS changes.
@@ -44,7 +44,7 @@ Reload the browser after adding the resource.
 In Lovelace, add a new card and choose **Manual** (YAML editor), then paste:
 
 ```yaml
-type: custom:polar-wind-card
+type: custom:polar-chart
 bearing_sensor: sensor.your_wind_bearing
 speed_sensor: sensor.your_wind_strength
 ```
@@ -101,7 +101,7 @@ claude   # start Claude Code, or edit the JS directly
 To deploy after changes:
 
 ```bash
-scp polar-wind-card.js hassio:/config/www/
+scp polar-chart.js hassio:/config/www/
 ```
 
 Then hard-reload the browser (Ctrl+F5 or Shift+F5) and bump the `?v=` suffix
