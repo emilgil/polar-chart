@@ -66,7 +66,7 @@ That's the minimum — everything else is optional.
 
 | Key              | Required | Default       | Description |
 |------------------|----------|---------------|-------------|
-| `bearing_sensor` | ✅       | —             | Entity ID for wind direction (degrees 0–360) |
+| `bearing_sensor` | ✅ (see note) | —        | Entity ID for wind direction (degrees 0–360). **Optional when `view_mode: daily`** — daily mode derives the angle from the timestamp's hour and doesn't need a direction sensor. |
 | `speed_sensor`   | ✅       | —             | Entity ID for wind speed |
 | `hours`          | ❌       | `12`          | Initial time window in hours |
 | `num_points`     | ❌       | `100`         | Number of buckets for the rebucketed display |

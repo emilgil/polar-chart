@@ -213,8 +213,14 @@ function _normalizeConfig(config) {
   const isLegacy = !!(config.bearing_sensor || config.speed_sensor);
 
   if (isLegacy) {
-    if (!config.bearing_sensor) {
-      throw new Error('polar-chart: bearing_sensor is required when speed_sensor is set');
+    // bearing_sensor is optional in daily mode (angle comes from timestamp hour),
+    // but still required for spiral mode when speed_sensor is set.
+    const isDailyNoBearing = config.view_mode === 'daily' && !config.bearing_sensor;
+    if (!config.bearing_sensor && !isDailyNoBearing) {
+      throw new Error(
+        'polar-chart: bearing_sensor is required when speed_sensor is set ' +
+        '(except when view_mode is "daily")'
+      );
     }
     if (config.speed_unit !== undefined && !(config.speed_unit in TO_MS)) {
       throw new Error(
@@ -223,11 +229,11 @@ function _normalizeConfig(config) {
       );
     }
     return {
-      angle: {
+      angle: config.bearing_sensor ? {
         sensor: config.bearing_sensor,
         min: 0, max: 360, cyclic: true,
         labels: { ...LEGACY_WIND_LABELS },
-      },
+      } : undefined,
       color: config.speed_sensor ? {
         sensor: config.speed_sensor,
         min: 0, max: 20,
@@ -260,14 +266,31 @@ class PolarChart extends HTMLElement {
   setConfig(config) {
     const cfg = _normalizeConfig(config);
 
-    if (!cfg.angle || !cfg.angle.sensor) {
-      throw new Error('polar-chart: angle.sensor is required');
+    let view_mode = cfg.view_mode || 'spiral';
+    if (view_mode !== 'spiral' && view_mode !== 'daily') {
+      throw new Error(
+        `polar-chart: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
+      );
     }
-    if (cfg.angle.min == null || cfg.angle.max == null) {
-      throw new Error('polar-chart: angle.min and angle.max are required');
+    if (view_mode === 'daily' && !cfg._isLegacyWind) {
+      // Daily-pattern mode is wind-specific; silently downgrade for generic configs.
+      view_mode = 'spiral';
     }
-    if (cfg.angle.min >= cfg.angle.max) {
-      throw new Error('polar-chart: angle.min must be less than angle.max');
+
+    // angle is optional in daily mode (angle is computed from timestamp hour);
+    // required in all other modes.
+    const isDailyNoAngle = view_mode === 'daily' && !cfg.angle;
+    if (!isDailyNoAngle) {
+      if (!cfg.angle || !cfg.angle.sensor) {
+        throw new Error('polar-chart: angle.sensor is required');
+      }
+      if (cfg.angle.min == null || cfg.angle.max == null) {
+        throw new Error('polar-chart: angle.min and angle.max are required');
+      }
+      if (cfg.angle.min >= cfg.angle.max) {
+        throw new Error('polar-chart: angle.min must be less than angle.max');
+      }
+      cfg.angle.cyclic = !!cfg.angle.cyclic;
     }
     if (cfg.color !== undefined) {
       if (!cfg.color.sensor) {
@@ -285,18 +308,6 @@ class PolarChart extends HTMLElement {
         `polar-chart: invalid language "${cfg.language}". ` +
         `Allowed: ${Object.keys(I18N).join(', ')}`
       );
-    }
-    cfg.angle.cyclic = !!cfg.angle.cyclic;
-
-    let view_mode = cfg.view_mode || 'spiral';
-    if (view_mode !== 'spiral' && view_mode !== 'daily') {
-      throw new Error(
-        `polar-chart: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
-      );
-    }
-    if (view_mode === 'daily' && !cfg._isLegacyWind) {
-      // Daily-pattern mode is wind-specific; silently downgrade for generic configs.
-      view_mode = 'spiral';
     }
 
     cfg.hours = Number(cfg.hours) || 12;
@@ -443,6 +454,8 @@ class PolarChart extends HTMLElement {
     });
 
     modeBtn.addEventListener('click', () => {
+      // Without an angle sensor, spiral mode has no meaningful theta — stay in daily.
+      if (!this._config.angle && this._viewMode === 'daily') return;
       this._viewMode = this._viewMode === 'spiral' ? 'daily' : 'spiral';
       this._redrawFromCache();
     });
@@ -496,12 +509,14 @@ class PolarChart extends HTMLElement {
     // Max-wind toggle: only meaningful when there's a color sensor to find max of.
     sr.getElementById('pw-maxwind').style.display = cfg.color ? '' : 'none';
 
-    // Wind rose: only for full-circle compass-style angle axes.
-    const isCompass = a.cyclic && a.min === 0 && a.max === 360;
+    // Wind rose: only for full-circle compass-style angle axes (requires angle sensor).
+    const isCompass = !!a && a.cyclic && a.min === 0 && a.max === 360;
     sr.getElementById('pw-windrose').style.display = isCompass ? '' : 'none';
 
-    // Daily-pattern view: wind-specific only.
-    sr.getElementById('pw-mode').style.display = cfg._isLegacyWind ? '' : 'none';
+    // Daily-pattern toggle: wind-specific. Hidden when there's no angle sensor
+    // (in that case the card is locked in daily mode — spiral would have nothing to plot).
+    const showModeToggle = cfg._isLegacyWind && !!a;
+    sr.getElementById('pw-mode').style.display = showModeToggle ? '' : 'none';
   }
 
   _startMaxWindAnimation() {
@@ -549,7 +564,8 @@ class PolarChart extends HTMLElement {
       const t_end_iso = new Date(t_now).toISOString();
       // end_time is required: HA's /api/history/period/{start} defaults to a
       // 24h window from start, NOT "to now".
-      const sensors = [this._config.angle.sensor];
+      const sensors = [];
+      if (this._config.angle?.sensor) sensors.push(this._config.angle.sensor);
       if (this._config.color?.sensor) sensors.push(this._config.color.sensor);
       const path =
         `/api/history/period/${t_start_iso}` +
@@ -585,7 +601,7 @@ class PolarChart extends HTMLElement {
   _parseHistory(data) {
     if (!Array.isArray(data) || data.length === 0) return [];
 
-    const angleSensor = this._config.angle.sensor;
+    const angleSensor = this._config.angle?.sensor;
     const colorSensor = this._config.color?.sensor;
     const colorFactor = this._config._isLegacyWind ? (TO_MS[this._colorUnit] || 1) : 1;
 
@@ -593,8 +609,8 @@ class PolarChart extends HTMLElement {
     for (const arr of data) {
       if (!Array.isArray(arr) || arr.length === 0) continue;
       const eid = arr[0].entity_id;
-      const isAngle = eid === angleSensor;
-      const isColor = colorSensor && eid === colorSensor;
+      const isAngle = !!angleSensor && eid === angleSensor;
+      const isColor = !!colorSensor && eid === colorSensor;
       if (!isAngle && !isColor) continue;
       const target = isAngle ? series.angle : series.color;
 
@@ -612,6 +628,12 @@ class PolarChart extends HTMLElement {
 
     series.angle.sort((a, b) => a.ts - b.ts);
     series.color.sort((a, b) => a.ts - b.ts);
+
+    // Angle-less mode (daily without bearing): color sensor drives the timeline.
+    if (!angleSensor) {
+      if (series.color.length === 0) return [];
+      return series.color.map(c => ({ ts: c.ts, angle: undefined, color: c.value }));
+    }
 
     if (series.angle.length === 0) return [];
 
