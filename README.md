@@ -112,6 +112,8 @@ color:                            # optional — omit for monochrome dots
     - { value: 50,  label: "Med"  }
     - { value: 100, label: "High" }
 refresh_interval: 10              # optional, see table above
+line_width: 1                     # optional, stroke width for connecting lines (default 1)
+dot_size: 4                       # optional, radius of data dots in px (default 4)
 bucket: hour                      # optional — "hour" snaps buckets to clock
                                   # hours and uses the mean of all samples in
                                   # each hour (overrides num_points)

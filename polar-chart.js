@@ -246,6 +246,8 @@ function _normalizeConfig(config) {
       view_mode: config.view_mode,
       refresh_interval: config.refresh_interval,
       bucket: config.bucket,
+      line_width: config.line_width,
+      dot_size: config.dot_size,
       _isLegacyWind: true,
       _legacySpeedUnitOverride: config.speed_unit,
     };
@@ -260,6 +262,8 @@ function _normalizeConfig(config) {
     view_mode: config.view_mode,
     refresh_interval: config.refresh_interval,
     bucket: config.bucket,
+    line_width: config.line_width,
+    dot_size: config.dot_size,
     _isLegacyWind: false,
   };
 }
@@ -299,6 +303,20 @@ class PolarChart extends HTMLElement {
       if (cfg.color.min == null || cfg.color.max == null) {
         throw new Error('polar-chart: color.min and color.max are required');
       }
+    }
+    if (cfg.line_width !== undefined) {
+      const lw = Number(cfg.line_width);
+      if (!isFinite(lw) || lw < 0) {
+        throw new Error(`polar-chart: invalid line_width "${cfg.line_width}". Must be a number >= 0`);
+      }
+      cfg.line_width = lw;
+    }
+    if (cfg.dot_size !== undefined) {
+      const ds = Number(cfg.dot_size);
+      if (!isFinite(ds) || ds < 0) {
+        throw new Error(`polar-chart: invalid dot_size "${cfg.dot_size}". Must be a number >= 0`);
+      }
+      cfg.dot_size = ds;
     }
     if (cfg.bucket !== undefined && cfg.bucket !== 'hour') {
       throw new Error(
@@ -916,7 +934,9 @@ class PolarChart extends HTMLElement {
       }
 
       // Connecting lines first.
-      ctx.lineWidth = 1;
+      const lineWidth = cfg.line_width != null ? cfg.line_width : 1;
+      const dotSize = cfg.dot_size != null ? cfg.dot_size : 4;
+      ctx.lineWidth = lineWidth;
       for (let i = 0; i < screen.length - 1; i++) {
         const a = screen[i];
         const b = screen[i + 1];
@@ -947,7 +967,7 @@ class PolarChart extends HTMLElement {
           ? _valueToColorString(p.color, colorCfg.palette)
           : 'rgb(150,150,150)';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, dotSize, 0, Math.PI * 2);
         ctx.fill();
       }
 
