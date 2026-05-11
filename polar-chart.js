@@ -919,7 +919,7 @@ class PolarChart extends HTMLElement {
       const points = this._rebucket(this._cache.raw, this._viewHours, cfg.num_points);
       const t_now = Date.now();
       const t_start = t_now - this._viewHours * 3_600_000;
-      const bucketWidth = (t_now - t_start) / cfg.num_points;
+      const bucketWidth = this._bucketMs || ((t_now - t_start) / cfg.num_points);
       const maxGap = Math.max(2 * bucketWidth, 30 * 60_000);
 
       let screen;
