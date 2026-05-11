@@ -782,7 +782,7 @@ class PolarChart extends HTMLElement {
     }
 
     // 2b. Wind rose overlay (only for full 0–360 cyclic angle axis)
-    const isCompass = angleCfg.cyclic && angleCfg.min === 0 && angleCfg.max === 360;
+    const isCompass = !!angleCfg && angleCfg.cyclic && angleCfg.min === 0 && angleCfg.max === 360;
     if (this._showWindRose && isCompass && this._cache.raw && this._cache.raw.length > 0) {
       const roseBuckets = this._rebucket(this._cache.raw, this._viewHours, cfg.num_points);
       if (roseBuckets.length > 0) {
