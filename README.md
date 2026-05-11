@@ -4,6 +4,11 @@ A Home Assistant Lovelace custom card that displays wind history as a polar spir
 Wind direction determines the angle, time determines the radius (center = oldest, edge = now),
 and wind speed determines the color of each data point.
 
+Beyond wind, the card works for any two HA sensors and any time window from
+30 minutes up to 7 days — making it a natural fit for 24-hour overviews or
+multi-day patterns where you want to see at a glance how a value (temperature,
+humidity, power, anything numeric) has developed over one or several days.
+
 ## Screenshots
 
 | Spiral, ~27h | Daily pattern, 48h | Full 7 days, 500 points |
