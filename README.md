@@ -102,6 +102,7 @@ color:                            # optional — omit for monochrome dots
   min: 0                          # required, value at the bottom of the gradient
   max: 100                        # required, value at the top
   unit: "%"                       # optional, shown in legend header
+  title: "Humidity"               # optional, custom legend header (otherwise just the unit)
   palette:                        # required, at least 2 entries
     - { value: 0,   color: "#60a5fa" }
     - { value: 50,  color: "#facc15" }
@@ -124,8 +125,10 @@ refresh_interval: 10              # optional, see table above
 - `cyclic: false` — the axis is open-ended (e.g. 0–100% humidity), drawn with a
   small gap at the top so min and max are visually distinct.
 
-The wind-rose overlay is only available for full 0–360 cyclic angle axes, and
-the daily-pattern view is only available for the legacy wind config.
+The wind-rose overlay is only available for full 0–360 cyclic angle axes.
+Daily-pattern view (`view_mode: daily`) works with any color sensor; angle is
+optional (when omitted, position around the dial is taken from the timestamp
+hour).
 
 ## Color scale
 

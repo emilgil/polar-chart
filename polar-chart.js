@@ -272,11 +272,6 @@ class PolarChart extends HTMLElement {
         `polar-chart: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
       );
     }
-    if (view_mode === 'daily' && !cfg._isLegacyWind) {
-      // Daily-pattern mode is wind-specific; silently downgrade for generic configs.
-      view_mode = 'spiral';
-    }
-
     // angle is optional in daily mode (angle is computed from timestamp hour);
     // required in all other modes.
     const isDailyNoAngle = view_mode === 'daily' && !cfg.angle;
@@ -1077,7 +1072,10 @@ class PolarChart extends HTMLElement {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
     let headerText;
-    if (cfg._isLegacyWind) {
+    const customTitle = colorCfg && colorCfg.title;
+    if (customTitle) {
+      headerText = unitDisplay ? `${customTitle} (${unitDisplay})` : customTitle;
+    } else if (cfg._isLegacyWind) {
       headerText = unitDisplay ? `${t.legendTitle} (${unitDisplay})` : t.legendTitle;
     } else {
       headerText = unitDisplay;
