@@ -93,8 +93,8 @@ to your configured unit at draw time.
 ## Development
 
 ```bash
-git clone git@github.com:emilgil/polar-wind-card.git
-cd polar-wind-card
+git clone git@github.com:emilgil/polar-chart.git
+cd polar-chart
 claude   # start Claude Code, or edit the JS directly
 ```
 
