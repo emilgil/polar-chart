@@ -112,6 +112,9 @@ color:                            # optional — omit for monochrome dots
     - { value: 50,  label: "Med"  }
     - { value: 100, label: "High" }
 refresh_interval: 10              # optional, see table above
+bucket: hour                      # optional — "hour" snaps buckets to clock
+                                  # hours and uses the mean of all samples in
+                                  # each hour (overrides num_points)
 ```
 
 **Palette notes:**

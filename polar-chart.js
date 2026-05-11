@@ -245,6 +245,7 @@ function _normalizeConfig(config) {
       language: config.language,
       view_mode: config.view_mode,
       refresh_interval: config.refresh_interval,
+      bucket: config.bucket,
       _isLegacyWind: true,
       _legacySpeedUnitOverride: config.speed_unit,
     };
@@ -258,6 +259,7 @@ function _normalizeConfig(config) {
     language: config.language,
     view_mode: config.view_mode,
     refresh_interval: config.refresh_interval,
+    bucket: config.bucket,
     _isLegacyWind: false,
   };
 }
@@ -297,6 +299,11 @@ class PolarChart extends HTMLElement {
       if (cfg.color.min == null || cfg.color.max == null) {
         throw new Error('polar-chart: color.min and color.max are required');
       }
+    }
+    if (cfg.bucket !== undefined && cfg.bucket !== 'hour') {
+      throw new Error(
+        `polar-chart: invalid bucket "${cfg.bucket}". Allowed: "hour"`
+      );
     }
     if (cfg.language !== undefined && !(cfg.language in I18N)) {
       throw new Error(
@@ -656,6 +663,39 @@ class PolarChart extends HTMLElement {
   _rebucket(raw, viewHours, numPoints) {
     if (!raw || raw.length === 0) return [];
     const t_now = Date.now();
+
+    if (this._config.bucket === 'hour') {
+      // Clock-aligned hourly buckets, mean within each bucket.
+      const hourMs = 3_600_000;
+      const t_end = Math.ceil(t_now / hourMs) * hourMs;
+      const numBuckets = Math.max(1, Math.ceil(viewHours));
+      const t_start = t_end - numBuckets * hourMs;
+      const colorSum = new Array(numBuckets).fill(0);
+      const colorN   = new Array(numBuckets).fill(0);
+      const angleLast = new Array(numBuckets).fill(null);
+      const tsLast   = new Array(numBuckets).fill(0);
+      for (const p of raw) {
+        if (p.ts < t_start || p.ts >= t_end) continue;
+        const i = Math.floor((p.ts - t_start) / hourMs);
+        if (p.color != null && isFinite(p.color)) {
+          colorSum[i] += p.color;
+          colorN[i]++;
+        }
+        if (p.angle != null) angleLast[i] = p.angle;
+        if (p.ts > tsLast[i]) tsLast[i] = p.ts;
+      }
+      const result = [];
+      for (let i = 0; i < numBuckets; i++) {
+        if (tsLast[i] === 0) continue;
+        result.push({
+          ts: t_start + i * hourMs + hourMs / 2,
+          color: colorN[i] > 0 ? colorSum[i] / colorN[i] : undefined,
+          angle: angleLast[i] != null ? angleLast[i] : undefined,
+        });
+      }
+      return result;
+    }
+
     const t_start = t_now - viewHours * 3_600_000;
     const width = (t_now - t_start) / numPoints;
     const result = [];

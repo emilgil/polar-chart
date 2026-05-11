@@ -5,7 +5,10 @@
       "Bash(scp *)",
       "Bash(ssh hassio *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(grep -n \"polar\\\\|www\\\\|push\\\\|HA_HOST\" C:/temp/github/claude/Makefile 2>&1 | head -30)",
+      "Bash(ssh root@192.168.1.97 \"ls -la /config/www/polar-chart.js\")"
     ]
   }
 }
