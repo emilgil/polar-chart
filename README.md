@@ -74,6 +74,9 @@ That's the minimum — everything else is optional.
 | `language`       | ❌       | auto-detect   | UI language. Allowed: `sv`, `en`. Defaults to HA locale, falls back to `sv` |
 | `view_mode`      | ❌       | `spiral`      | Initial view: `spiral` or `daily` |
 | `refresh_interval` | ❌     | `10`          | Auto-refresh interval in minutes. Minimum `1` |
+| `bucket`         | ❌       | —             | Snap buckets to clock boundaries and average samples per bucket. Accepts `"15m"`, `"30m"`, `"1h"`, `"12h"`, `"1d"`, etc. Overrides `num_points` when set |
+| `line_width`     | ❌       | `1`           | Stroke width for the connecting line between points |
+| `dot_size`       | ❌       | `4`           | Radius of each data dot, in pixels |
 
 The card uses the `hass` object that Lovelace already injects, so you don't need
 `ha_url` or `ha_token` in the config.
@@ -160,7 +163,7 @@ to your configured unit at draw time.
 - **🔄 pw-mode** — toggle between spiral and daily-pattern mode
 - **Hours / Datapoints inputs** — change time window or bucket count
 - **Mouse wheel** on the canvas — zoom in/out (0.5h to 168h)
-- **Auto-refresh** every 10 minutes
+- **Auto-refresh** every `refresh_interval` minutes (default 10)
 
 ## Development
 
