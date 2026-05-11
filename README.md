@@ -114,9 +114,12 @@ color:                            # optional — omit for monochrome dots
 refresh_interval: 10              # optional, see table above
 line_width: 1                     # optional, stroke width for connecting lines (default 1)
 dot_size: 4                       # optional, radius of data dots in px (default 4)
-bucket: hour                      # optional — "hour" snaps buckets to clock
-                                  # hours and uses the mean of all samples in
-                                  # each hour (overrides num_points)
+bucket: 1h                        # optional — snaps buckets to clock boundaries
+                                  # (aligned to local midnight) and uses the
+                                  # mean of all samples in each bucket. Accepts
+                                  # "15m", "30m", "1h", "12h", "1d", etc.
+                                  # (legacy alias "hour" still works).
+                                  # Overrides num_points when set.
 ```
 
 **Palette notes:**

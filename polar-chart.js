@@ -186,6 +186,28 @@ function _computeAngleRose(buckets, angleConfig, numSectors = 16) {
   return counts.map(c => c / max);
 }
 
+// Parse a bucket spec like "15m", "30m", "1h", "12h", "1d" (or legacy "hour")
+// into milliseconds. Returns null if invalid or undefined.
+function _parseBucket(spec) {
+  if (spec == null) return null;
+  if (spec === 'hour') return 3_600_000;
+  const m = String(spec).trim().match(/^(\d+(?:\.\d+)?)\s*(m|min|h|hour|hours|d|day|days)?$/i);
+  if (!m) throw new Error(
+    `polar-chart: invalid bucket "${spec}". Examples: "15m", "30m", "1h", "12h", "1d"`
+  );
+  const n = parseFloat(m[1]);
+  const unit = (m[2] || 'm').toLowerCase();
+  let ms;
+  if (unit === 'm' || unit === 'min') ms = n * 60_000;
+  else if (unit === 'h' || unit === 'hour' || unit === 'hours') ms = n * 3_600_000;
+  else if (unit === 'd' || unit === 'day' || unit === 'days') ms = n * 86_400_000;
+  else ms = n * 60_000;
+  if (!isFinite(ms) || ms < 60_000) {
+    throw new Error(`polar-chart: bucket "${spec}" must be at least 1 minute`);
+  }
+  return ms;
+}
+
 function _resolveLanguage(config, hass) {
   if (config.language) return config.language;
   const supported = Object.keys(I18N);
@@ -318,11 +340,7 @@ class PolarChart extends HTMLElement {
       }
       cfg.dot_size = ds;
     }
-    if (cfg.bucket !== undefined && cfg.bucket !== 'hour') {
-      throw new Error(
-        `polar-chart: invalid bucket "${cfg.bucket}". Allowed: "hour"`
-      );
-    }
+    this._bucketMs = _parseBucket(cfg.bucket);
     if (cfg.language !== undefined && !(cfg.language in I18N)) {
       throw new Error(
         `polar-chart: invalid language "${cfg.language}". ` +
@@ -682,19 +700,22 @@ class PolarChart extends HTMLElement {
     if (!raw || raw.length === 0) return [];
     const t_now = Date.now();
 
-    if (this._config.bucket === 'hour') {
-      // Clock-aligned hourly buckets, mean within each bucket.
-      const hourMs = 3_600_000;
-      const t_end = Math.ceil(t_now / hourMs) * hourMs;
-      const numBuckets = Math.max(1, Math.ceil(viewHours));
-      const t_start = t_end - numBuckets * hourMs;
+    const bucketMs = this._bucketMs;
+    if (bucketMs) {
+      // Clock-aligned buckets (from local midnight), mean within each bucket.
+      const localMidnight = new Date(t_now);
+      localMidnight.setHours(0, 0, 0, 0);
+      const anchor = localMidnight.getTime();
+      const t_end = anchor + Math.ceil((t_now - anchor) / bucketMs) * bucketMs;
+      const numBuckets = Math.max(1, Math.ceil((viewHours * 3_600_000) / bucketMs));
+      const t_start = t_end - numBuckets * bucketMs;
       const colorSum = new Array(numBuckets).fill(0);
       const colorN   = new Array(numBuckets).fill(0);
       const angleLast = new Array(numBuckets).fill(null);
       const tsLast   = new Array(numBuckets).fill(0);
       for (const p of raw) {
         if (p.ts < t_start || p.ts >= t_end) continue;
-        const i = Math.floor((p.ts - t_start) / hourMs);
+        const i = Math.floor((p.ts - t_start) / bucketMs);
         if (p.color != null && isFinite(p.color)) {
           colorSum[i] += p.color;
           colorN[i]++;
@@ -706,7 +727,7 @@ class PolarChart extends HTMLElement {
       for (let i = 0; i < numBuckets; i++) {
         if (tsLast[i] === 0) continue;
         result.push({
-          ts: t_start + i * hourMs + hourMs / 2,
+          ts: t_start + i * bucketMs + bucketMs / 2,
           color: colorN[i] > 0 ? colorSum[i] / colorN[i] : undefined,
           angle: angleLast[i] != null ? angleLast[i] : undefined,
         });
