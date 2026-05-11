@@ -1,44 +1,52 @@
 /*
  * polar-wind-card.js — Home Assistant Lovelace custom card
  *
+ * Visualises any two HA sensors as a polar time-spiral:
+ *   angle (required)  → angular position
+ *   color (optional)  → dot color via a configurable palette
+ *
  * INSTALLATION
  * 1. Copy this file to /config/www/polar-wind-card.js
  * 2. In Lovelace: Settings → Dashboards → Resources → Add resource
  *      URL:  /local/polar-wind-card.js
  *      Type: JavaScript module
- * 3. Reload the browser, then add a card:
+ * 3. Reload the browser, then add a card.
+ *
+ * BACKWARDS COMPATIBLE — legacy wind config keeps working unchanged:
  *
  *   type: custom:polar-wind-card
- *   bearing_sensor: sensor.your_bearing   # required — must report degrees 0–360
- *   speed_sensor: sensor.your_speed       # required
- *   hours: 12                             # optional, default 12
- *   num_points: 100                       # optional, default 100
- *   speed_unit: m/s                       # optional: "m/s" | "km/h" | "mph" | "knop"
- *   language: sv                          # optional: "sv" | "en"
- *                                         # defaults to HA locale, falls back to "sv"
- *   view_mode: spiral                     # optional: "spiral" (default) | "daily"
+ *   bearing_sensor: sensor.your_bearing
+ *   speed_sensor:   sensor.your_speed
  *
- * Toggle buttons in the controls row enable/disable max-wind marker and wind-rose overlay.
+ * GENERIC config:
  *
- * No ha_url or ha_token needed — auth is handled automatically via the Lovelace hass object.
- * Speed unit is auto-detected from sensor's unit_of_measurement attribute.
- * speed_unit in YAML overrides auto-detection. Supported: m/s, km/h, mph, knop (kn).
- * Values are converted to m/s internally — color thresholds are always in m/s.
- * Language defaults to the HA locale setting (e.g. sv-SE → sv, en-GB → en).
+ *   type: custom:polar-wind-card
+ *   angle:
+ *     sensor: sensor.x
+ *     min: 0
+ *     max: 360
+ *     cyclic: true
+ *     labels: { 0: "N", 90: "E", 180: "S", 270: "W" }
+ *   color:                       # optional
+ *     sensor: sensor.y
+ *     min: 0
+ *     max: 100
+ *     unit: "%"
+ *     palette:
+ *       - { value: 0,   color: "#60a5fa" }
+ *       - { value: 50,  color: "#facc15" }
+ *       - { value: 100, color: "#f87171" }
+ *
+ * No ha_url or ha_token needed — auth is handled via the Lovelace hass object.
+ * Daily-pattern view is only available for legacy wind configs.
+ * Wind-rose overlay is only shown when angle is a full 0–360 cyclic axis.
  */
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const CACHE_HORIZON_H = 168;
 
-// Anchor stops for both the data-point color interpolation and the legend
-// gradient bar. Speeds are always in m/s.
-const COLOR_STOPS = [
-  { v: 0,  r: 96,  g: 165, b: 250 }, // #60a5fa
-  { v: 3,  r: 74,  g: 222, b: 128 }, // #4ade80
-  { v: 8,  r: 250, g: 204, b: 21  }, // #facc15
-  { v: 14, r: 251, g: 146, b: 60  }, // #fb923c
-  { v: 20, r: 248, g: 113, b: 113 }, // #f87171
-];
+// 10° gap at top for non-cyclic angle axes (between max and min endpoints)
+const NON_CYCLIC_GAP_RAD = 10 * Math.PI / 180;
 
 const TO_MS = {
   'm/s':  1.0,
@@ -62,7 +70,19 @@ const HA_UNIT_MAP = {
   'kn':   'knop',
 };
 
-const COMPASS_LABELS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+// Default wind palette (m/s) — used by legacy normalization
+const LEGACY_WIND_PALETTE = [
+  { value: 0,  color: '#60a5fa' },
+  { value: 3,  color: '#4ade80' },
+  { value: 8,  color: '#facc15' },
+  { value: 14, color: '#fb923c' },
+  { value: 20, color: '#f87171' },
+];
+
+const LEGACY_WIND_LABELS = {
+  0: 'N', 45: 'NE', 90: 'E', 135: 'SE',
+  180: 'S', 225: 'SW', 270: 'W', 315: 'NW',
+};
 
 const I18N = {
   sv: {
@@ -78,14 +98,10 @@ const I18N = {
     now:         'Nu',
     speedLabels: ['Lugnt', 'Lätt', 'Måttligt', 'Friskt', 'Hård vind'],
     unitName:    { 'm/s': 'm/s', 'km/h': 'km/h', 'mph': 'mph', 'knop': 'knop' },
-    maxWind:     'Maxvind',
-    windRose:    'Vindros',
-    maxWindBtn:  'Visa maxvind',
+    maxWindBtn:  'Visa max',
     windRoseBtn: 'Visa vindros',
     today:       'Idag',
     days:        'dygn',
-    modeSpiral:  'Spiral',
-    modeDaily:   'Dagsmönster',
   },
   en: {
     hoursLabel:  'Hours back',
@@ -100,59 +116,70 @@ const I18N = {
     now:         'Now',
     speedLabels: ['Calm', 'Light', 'Moderate', 'Fresh', 'Storm'],
     unitName:    { 'm/s': 'm/s', 'km/h': 'km/h', 'mph': 'mph', 'knop': 'knots' },
-    maxWind:     'Max wind',
-    windRose:    'Wind rose',
-    maxWindBtn:  'Show max wind',
+    maxWindBtn:  'Show max',
     windRoseBtn: 'Show wind rose',
     today:       'Today',
     days:        'days',
-    modeSpiral:  'Spiral',
-    modeDaily:   'Daily pattern',
   },
 };
 
-function speedToRgb(ms) {
-  if (ms <= COLOR_STOPS[0].v) {
-    const s = COLOR_STOPS[0];
+function _hexToRgb(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { r, g, b };
+}
+
+function _valueToRgb(value, palette) {
+  if (!palette || palette.length === 0) return { r: 150, g: 150, b: 150 };
+  const stops = palette.map(s => ({ value: s.value, ...(_hexToRgb(s.color)) }));
+  if (stops.length === 1 || value <= stops[0].value) {
+    const s = stops[0];
     return { r: s.r, g: s.g, b: s.b };
   }
-  const last = COLOR_STOPS[COLOR_STOPS.length - 1];
-  if (ms >= last.v) return { r: last.r, g: last.g, b: last.b };
-  const hi = COLOR_STOPS.findIndex(s => s.v > ms);
-  const lo = COLOR_STOPS[hi - 1];
-  const f = (ms - lo.v) / (COLOR_STOPS[hi].v - lo.v);
+  const last = stops[stops.length - 1];
+  if (value >= last.value) return { r: last.r, g: last.g, b: last.b };
+  const hi = stops.findIndex(s => s.value > value);
+  const lo = stops[hi - 1];
+  const f = (value - lo.value) / (stops[hi].value - lo.value);
   return {
-    r: Math.round(lo.r + f * (COLOR_STOPS[hi].r - lo.r)),
-    g: Math.round(lo.g + f * (COLOR_STOPS[hi].g - lo.g)),
-    b: Math.round(lo.b + f * (COLOR_STOPS[hi].b - lo.b)),
+    r: Math.round(lo.r + f * (stops[hi].r - lo.r)),
+    g: Math.round(lo.g + f * (stops[hi].g - lo.g)),
+    b: Math.round(lo.b + f * (stops[hi].b - lo.b)),
   };
 }
 
-function speedToColor(ms) {
-  const c = speedToRgb(ms);
+function _valueToColorString(value, palette) {
+  const c = _valueToRgb(value, palette);
   return `rgb(${c.r},${c.g},${c.b})`;
 }
 
-function msToDisplay(ms, unit) {
-  return Math.round(ms * FROM_MS[unit]);
+// value → angle in radians, where theta=0 means "up" (north) and increases clockwise.
+// Cyclic: full 360°, min and max coincide.
+// Non-cyclic: full 360° minus a small gap at top, so min and max are visually distinct.
+function _valueToTheta(value, min, max, cyclic) {
+  const norm = (value - min) / (max - min);
+  if (cyclic) return norm * 2 * Math.PI;
+  return NON_CYCLIC_GAP_RAD / 2 + norm * (2 * Math.PI - NON_CYCLIC_GAP_RAD);
 }
 
-function formatRingLabel(hoursAgo, nowLabel) {
-  if (hoursAgo === 0) return nowLabel;
-  const rounded = hoursAgo < 2 ? Math.round(hoursAgo * 10) / 10 : Math.round(hoursAgo);
-  return `-${rounded}h`;
-}
-
-function _findMaxPoint(buckets) {
+function _findMaxColorPoint(buckets) {
   if (!buckets || buckets.length === 0) return null;
-  return buckets.reduce((max, p) => p.speed > max.speed ? p : max, buckets[0]);
+  let max = null;
+  for (const p of buckets) {
+    if (p.color == null || !isFinite(p.color)) continue;
+    if (!max || p.color > max.color) max = p;
+  }
+  return max;
 }
 
-function _computeWindRose(buckets, numSectors = 16) {
+function _computeAngleRose(buckets, angleConfig, numSectors = 16) {
   const counts = new Array(numSectors).fill(0);
-  const width = 360 / numSectors;
+  const range = angleConfig.max - angleConfig.min;
   for (const p of buckets) {
-    const i = Math.floor((((p.bearing % 360) + 360) % 360) / width) % numSectors;
+    if (p.angle == null || !isFinite(p.angle)) continue;
+    const norm = ((p.angle - angleConfig.min) % range + range) % range / range;
+    const i = Math.floor(norm * numSectors) % numSectors;
     counts[i]++;
   }
   const max = Math.max(...counts, 1);
@@ -160,7 +187,6 @@ function _computeWindRose(buckets, numSectors = 16) {
 }
 
 function _resolveLanguage(config, hass) {
-  // Explicit YAML value is already validated in setConfig — accept as-is.
   if (config.language) return config.language;
   const supported = Object.keys(I18N);
   const locale = hass?.locale?.language?.split('-')[0]?.toLowerCase();
@@ -168,59 +194,119 @@ function _resolveLanguage(config, hass) {
   return 'sv';
 }
 
-function _resolveSpeedUnit(config, hass) {
-  // Explicit YAML value is already validated in setConfig — accept as-is.
-  if (config.speed_unit) return config.speed_unit;
-  const haUnit = hass?.states?.[config.speed_sensor]?.attributes?.unit_of_measurement;
-  if (haUnit && HA_UNIT_MAP[haUnit]) return HA_UNIT_MAP[haUnit];
-  return 'm/s';
+function _resolveColorUnit(config, hass) {
+  if (!config.color?.sensor) return '';
+  if (config._isLegacyWind) {
+    if (config._legacySpeedUnitOverride) return config._legacySpeedUnitOverride;
+    const haUnit = hass?.states?.[config.color.sensor]?.attributes?.unit_of_measurement;
+    if (haUnit && HA_UNIT_MAP[haUnit]) return HA_UNIT_MAP[haUnit];
+    return 'm/s';
+  }
+  if (config.color.unit) return config.color.unit;
+  const haUnit = hass?.states?.[config.color.sensor]?.attributes?.unit_of_measurement;
+  return haUnit || '';
 }
 
-class PolarWindCard extends HTMLElement {
-  setConfig(config) {
-    const required = ['bearing_sensor', 'speed_sensor'];
-    for (const key of required) {
-      if (!config || !config[key]) {
-        throw new Error(`polar-wind-card: missing required config key: ${key}`);
-      }
-    }
+function _normalizeConfig(config) {
+  if (!config) throw new Error('polar-wind-card: missing config');
 
+  const isLegacy = !!(config.bearing_sensor || config.speed_sensor);
+
+  if (isLegacy) {
+    if (!config.bearing_sensor) {
+      throw new Error('polar-wind-card: bearing_sensor is required when speed_sensor is set');
+    }
     if (config.speed_unit !== undefined && !(config.speed_unit in TO_MS)) {
       throw new Error(
         `polar-wind-card: invalid speed_unit "${config.speed_unit}". ` +
         `Allowed: ${Object.keys(TO_MS).join(', ')}`
       );
     }
+    return {
+      angle: {
+        sensor: config.bearing_sensor,
+        min: 0, max: 360, cyclic: true,
+        labels: { ...LEGACY_WIND_LABELS },
+      },
+      color: config.speed_sensor ? {
+        sensor: config.speed_sensor,
+        min: 0, max: 20,
+        palette: LEGACY_WIND_PALETTE.map(s => ({ ...s })),
+        legend: LEGACY_WIND_PALETTE.map((s, i) => ({ value: s.value, labelIndex: i })),
+      } : undefined,
+      hours: config.hours,
+      num_points: config.num_points,
+      language: config.language,
+      view_mode: config.view_mode,
+      _isLegacyWind: true,
+      _legacySpeedUnitOverride: config.speed_unit,
+    };
+  }
 
-    if (config.language !== undefined && !(config.language in I18N)) {
+  return {
+    angle: config.angle ? { ...config.angle } : undefined,
+    color: config.color ? { ...config.color } : undefined,
+    hours: config.hours,
+    num_points: config.num_points,
+    language: config.language,
+    view_mode: config.view_mode,
+    _isLegacyWind: false,
+  };
+}
+
+class PolarWindCard extends HTMLElement {
+  setConfig(config) {
+    const cfg = _normalizeConfig(config);
+
+    if (!cfg.angle || !cfg.angle.sensor) {
+      throw new Error('polar-wind-card: angle.sensor is required');
+    }
+    if (cfg.angle.min == null || cfg.angle.max == null) {
+      throw new Error('polar-wind-card: angle.min and angle.max are required');
+    }
+    if (cfg.angle.min >= cfg.angle.max) {
+      throw new Error('polar-wind-card: angle.min must be less than angle.max');
+    }
+    if (cfg.color !== undefined) {
+      if (!cfg.color.sensor) {
+        throw new Error('polar-wind-card: color.sensor is required when color block is present');
+      }
+      if (!Array.isArray(cfg.color.palette) || cfg.color.palette.length < 2) {
+        throw new Error('polar-wind-card: color.palette must have at least 2 entries');
+      }
+      if (cfg.color.min == null || cfg.color.max == null) {
+        throw new Error('polar-wind-card: color.min and color.max are required');
+      }
+    }
+    if (cfg.language !== undefined && !(cfg.language in I18N)) {
       throw new Error(
-        `polar-wind-card: invalid language "${config.language}". ` +
+        `polar-wind-card: invalid language "${cfg.language}". ` +
         `Allowed: ${Object.keys(I18N).join(', ')}`
       );
     }
+    cfg.angle.cyclic = !!cfg.angle.cyclic;
 
-    const view_mode = config.view_mode || 'spiral';
+    let view_mode = cfg.view_mode || 'spiral';
     if (view_mode !== 'spiral' && view_mode !== 'daily') {
       throw new Error(
         `polar-wind-card: invalid view_mode "${view_mode}". Allowed: "spiral", "daily"`
       );
     }
+    if (view_mode === 'daily' && !cfg._isLegacyWind) {
+      // Daily-pattern mode is wind-specific; silently downgrade for generic configs.
+      view_mode = 'spiral';
+    }
 
-    this._config = {
-      bearing_sensor: config.bearing_sensor,
-      speed_sensor: config.speed_sensor,
-      hours: Number(config.hours) || 12,
-      num_points: Number(config.num_points) || 100,
-      speed_unit: config.speed_unit, // possibly undefined; resolved in set hass()
-      language: config.language,     // possibly undefined; resolved in set hass()
-      view_mode,
-    };
+    cfg.hours = Number(cfg.hours) || 12;
+    cfg.num_points = Number(cfg.num_points) || 100;
+    cfg.view_mode = view_mode;
 
+    this._config = cfg;
     this._viewMode = view_mode;
     this._showMaxWind = false;
     this._showWindRose = false;
 
-    this._viewHours = this._config.hours;
+    this._viewHours = cfg.hours;
     this._cache = { raw: null, fetchedAt: null, fetchedHours: null };
     this._fetching = false;
     this._fetchError = false;
@@ -229,7 +315,7 @@ class PolarWindCard extends HTMLElement {
     if (!this.shadowRoot) this._buildDOM();
 
     this.shadowRoot.getElementById('pw-hours').value = this._viewHours;
-    this.shadowRoot.getElementById('pw-points').value = this._config.num_points;
+    this.shadowRoot.getElementById('pw-points').value = cfg.num_points;
 
     this._maybeStart();
   }
@@ -243,15 +329,14 @@ class PolarWindCard extends HTMLElement {
     if (this._hasStarted || !this._hass || !this._config) return;
     this._hasStarted = true;
     this._lang      = _resolveLanguage(this._config, this._hass);
-    this._speedUnit = _resolveSpeedUnit(this._config, this._hass);
+    this._colorUnit = _resolveColorUnit(this._config, this._hass);
     this._applyI18n();
+    this._applyButtonVisibility();
     this._startLoading();
     this._interval = setInterval(() => this._invalidateAndFetch(), AUTO_REFRESH_MS);
   }
 
   connectedCallback() {
-    // Loading is triggered by set hass(), not here — connectedCallback may fire
-    // before hass is available. Set up ResizeObserver here since canvas is in DOM.
     if (!this._resizeObserver && this.shadowRoot) {
       const canvas = this.shadowRoot.getElementById('pw-canvas');
       this._resizeObserver = new ResizeObserver(() => this._redrawFromCache());
@@ -386,6 +471,23 @@ class PolarWindCard extends HTMLElement {
     sr.getElementById('pw-windrose').title = t.windRoseBtn;
   }
 
+  _applyButtonVisibility() {
+    const sr = this.shadowRoot;
+    if (!sr) return;
+    const cfg = this._config;
+    const a = cfg.angle;
+
+    // Max-wind toggle: only meaningful when there's a color sensor to find max of.
+    sr.getElementById('pw-maxwind').style.display = cfg.color ? '' : 'none';
+
+    // Wind rose: only for full-circle compass-style angle axes.
+    const isCompass = a.cyclic && a.min === 0 && a.max === 360;
+    sr.getElementById('pw-windrose').style.display = isCompass ? '' : 'none';
+
+    // Daily-pattern view: wind-specific only.
+    sr.getElementById('pw-mode').style.display = cfg._isLegacyWind ? '' : 'none';
+  }
+
   _startMaxWindAnimation() {
     if (this._maxWindRaf) return;
     const tick = () => {
@@ -430,12 +532,12 @@ class PolarWindCard extends HTMLElement {
       const t_start_iso = new Date(t_now - hours * 3_600_000).toISOString();
       const t_end_iso = new Date(t_now).toISOString();
       // end_time is required: HA's /api/history/period/{start} defaults to a
-      // 24h window from start, NOT "to now". Without it, fetching 168h back
-      // returns only the first 24h of that range (week-old data, no fresh).
+      // 24h window from start, NOT "to now".
+      const sensors = [this._config.angle.sensor];
+      if (this._config.color?.sensor) sensors.push(this._config.color.sensor);
       const path =
         `/api/history/period/${t_start_iso}` +
-        `?filter_entity_id=${encodeURIComponent(this._config.bearing_sensor)},` +
-        `${encodeURIComponent(this._config.speed_sensor)}` +
+        `?filter_entity_id=${sensors.map(encodeURIComponent).join(',')}` +
         `&end_time=${encodeURIComponent(t_end_iso)}` +
         `&minimal_response=true&significant_changes_only=false`;
       const url = typeof this._hass.hassUrl === 'function'
@@ -450,8 +552,6 @@ class PolarWindCard extends HTMLElement {
       const data = await resp.json();
 
       const raw = this._parseHistory(data);
-      // Only replace the cache when we actually got something — protects Stage 1
-      // data from being wiped out if Stage 2 (or any retry) returns 0 points.
       if (raw.length > 0) {
         this._cache.raw = raw;
         this._cache.fetchedHours = hours;
@@ -469,15 +569,18 @@ class PolarWindCard extends HTMLElement {
   _parseHistory(data) {
     if (!Array.isArray(data) || data.length === 0) return [];
 
-    const speedFactor = TO_MS[this._speedUnit];
-    const series = { bearing: [], speed: [] };
+    const angleSensor = this._config.angle.sensor;
+    const colorSensor = this._config.color?.sensor;
+    const colorFactor = this._config._isLegacyWind ? (TO_MS[this._colorUnit] || 1) : 1;
+
+    const series = { angle: [], color: [] };
     for (const arr of data) {
       if (!Array.isArray(arr) || arr.length === 0) continue;
       const eid = arr[0].entity_id;
-      const isBearing = eid === this._config.bearing_sensor;
-      const isSpeed = eid === this._config.speed_sensor;
-      if (!isBearing && !isSpeed) continue;
-      const target = isBearing ? series.bearing : series.speed;
+      const isAngle = eid === angleSensor;
+      const isColor = colorSensor && eid === colorSensor;
+      if (!isAngle && !isColor) continue;
+      const target = isAngle ? series.angle : series.color;
 
       for (const entry of arr) {
         const state = entry.state;
@@ -486,27 +589,32 @@ class PolarWindCard extends HTMLElement {
         if (!isFinite(num)) continue;
         const ts = new Date(entry.last_changed || entry.last_updated).getTime();
         if (!isFinite(ts)) continue;
-        const value = isSpeed ? num * speedFactor : num;
+        const value = isColor ? num * colorFactor : num;
         target.push({ ts, value });
       }
     }
 
-    series.bearing.sort((a, b) => a.ts - b.ts);
-    series.speed.sort((a, b) => a.ts - b.ts);
+    series.angle.sort((a, b) => a.ts - b.ts);
+    series.color.sort((a, b) => a.ts - b.ts);
 
-    if (series.bearing.length === 0 || series.speed.length === 0) return [];
+    if (series.angle.length === 0) return [];
+
+    if (!colorSensor) {
+      return series.angle.map(a => ({ ts: a.ts, angle: a.value, color: undefined }));
+    }
+    if (series.color.length === 0) return [];
 
     const out = [];
     let j = 0;
-    for (const b of series.bearing) {
-      while (j + 1 < series.speed.length &&
-             Math.abs(series.speed[j + 1].ts - b.ts) <= Math.abs(series.speed[j].ts - b.ts)) {
+    for (const a of series.angle) {
+      while (j + 1 < series.color.length &&
+             Math.abs(series.color[j + 1].ts - a.ts) <= Math.abs(series.color[j].ts - a.ts)) {
         j++;
       }
-      const s = series.speed[j];
-      if (!s) continue;
-      if (Math.abs(s.ts - b.ts) > 60_000) continue;
-      out.push({ ts: b.ts, bearing: b.value, speed: s.value });
+      const c = series.color[j];
+      if (!c) continue;
+      if (Math.abs(c.ts - a.ts) > 60_000) continue;
+      out.push({ ts: a.ts, angle: a.value, color: c.value });
     }
 
     return out;
@@ -544,16 +652,36 @@ class PolarWindCard extends HTMLElement {
     requestAnimationFrame(() => this._draw());
   }
 
+  // Convert a stored color value to its display representation in the configured unit.
+  _formatColorValue(value, decimals = 1) {
+    if (this._config._isLegacyWind) {
+      const factor = FROM_MS[this._colorUnit] || 1;
+      return (value * factor).toFixed(decimals);
+    }
+    return Number(value).toFixed(decimals);
+  }
+
+  _displayColorValueRounded(value) {
+    if (this._config._isLegacyWind) {
+      const factor = FROM_MS[this._colorUnit] || 1;
+      return Math.round(value * factor);
+    }
+    // Round only if integer-ish for cleanliness; otherwise 1 decimal.
+    const n = Number(value);
+    return Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1);
+  }
+
+  _displayUnit() {
+    const t = I18N[this._lang];
+    if (this._config._isLegacyWind) return t.unitName[this._colorUnit] || this._colorUnit;
+    return this._colorUnit || '';
+  }
+
   _draw() {
     const canvas = this.shadowRoot?.getElementById('pw-canvas');
     if (!canvas) return;
-    // Wait until init has run — _lang and _speedUnit must be set.
-    if (!this._lang || !this._speedUnit) return;
+    if (!this._lang) return;
 
-    // If the canvas hasn't been laid out yet (e.g. card not yet visible),
-    // poll until it gets a real size. ResizeObserver should also catch this,
-    // but some Lovelace setups (hidden tabs, lazy mounts) don't fire it
-    // reliably on the initial show. Stop polling once we have a size.
     if (canvas.clientWidth <= 0) {
       if (!this._drawRetryScheduled) {
         this._drawRetryScheduled = true;
@@ -573,8 +701,10 @@ class PolarWindCard extends HTMLElement {
     const cy = size / 2;
     const max_radius = size * 0.42;
     const t = I18N[this._lang];
-    const unit = this._speedUnit;
-    const unitDisplay = t.unitName[unit];
+    const cfg = this._config;
+    const angleCfg = cfg.angle;
+    const colorCfg = cfg.color;
+    const unitDisplay = this._displayUnit();
 
     // 1. Background
     ctx.fillStyle = '#1e2130';
@@ -604,19 +734,24 @@ class PolarWindCard extends HTMLElement {
         }
       } else {
         const hoursAgo = this._viewHours * (1 - frac);
-        label = formatRingLabel(hoursAgo, t.now);
+        if (hoursAgo === 0) label = t.now;
+        else {
+          const rounded = hoursAgo < 2 ? Math.round(hoursAgo * 10) / 10 : Math.round(hoursAgo);
+          label = `-${rounded}h`;
+        }
       }
       ctx.fillText(label, cx, cy - r - 2);
     }
 
-    // 2b. Wind rose overlay — drawn under compass lines and data points.
-    if (this._showWindRose && this._cache.raw && this._cache.raw.length > 0) {
-      const roseBuckets = this._rebucket(this._cache.raw, this._viewHours, this._config.num_points);
+    // 2b. Wind rose overlay (only for full 0–360 cyclic angle axis)
+    const isCompass = angleCfg.cyclic && angleCfg.min === 0 && angleCfg.max === 360;
+    if (this._showWindRose && isCompass && this._cache.raw && this._cache.raw.length > 0) {
+      const roseBuckets = this._rebucket(this._cache.raw, this._viewHours, cfg.num_points);
       if (roseBuckets.length > 0) {
         const numSectors = 16;
         const sectorWidthDeg = 360 / numSectors;
         const sectorMaxRadius = max_radius * 0.38;
-        const freqs = _computeWindRose(roseBuckets, numSectors);
+        const freqs = _computeAngleRose(roseBuckets, angleCfg, numSectors);
         ctx.fillStyle = 'rgba(255,255,255,0.15)';
         ctx.strokeStyle = 'rgba(255,255,255,0.35)';
         ctx.lineWidth = 0.5;
@@ -649,7 +784,6 @@ class PolarWindCard extends HTMLElement {
         ctx.stroke();
       }
 
-      // Hour labels every 3 hours
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'center';
@@ -662,29 +796,7 @@ class PolarWindCard extends HTMLElement {
         ctx.fillText(String(h).padStart(2, '0'), x, y);
       }
     } else {
-      // Spiral mode: 8 compass lines + N/E/S/W labels
-      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-      for (let i = 0; i < 8; i++) {
-        const theta = i * Math.PI / 4;
-        const x = cx + max_radius * Math.sin(theta);
-        const y = cy - max_radius * Math.cos(theta);
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = '11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const labelRadius = max_radius + 14;
-      for (let i = 0; i < 8; i++) {
-        const theta = i * Math.PI / 4;
-        const x = cx + labelRadius * Math.sin(theta);
-        const y = cy - labelRadius * Math.cos(theta);
-        ctx.fillText(COMPASS_LABELS[i], x, y);
-      }
+      this._drawAngleAxis(ctx, cx, cy, max_radius, angleCfg);
     }
 
     // 5. Data points
@@ -692,15 +804,12 @@ class PolarWindCard extends HTMLElement {
     const showError = this._fetchError && (!this._cache.raw || this._cache.raw.length === 0);
 
     if (!showLoading && !showError && this._cache.raw && this._cache.raw.length > 0) {
-      const points = this._rebucket(this._cache.raw, this._viewHours, this._config.num_points);
+      const points = this._rebucket(this._cache.raw, this._viewHours, cfg.num_points);
       const t_now = Date.now();
       const t_start = t_now - this._viewHours * 3_600_000;
-      const bucketWidth = (t_now - t_start) / this._config.num_points;
-      // Floor at 30 min so lines stay drawn at small viewHours where bucket
-      // width gets shorter than typical sensor cadence (~15–20 min).
+      const bucketWidth = (t_now - t_start) / cfg.num_points;
       const maxGap = Math.max(2 * bucketWidth, 30 * 60_000);
 
-      // Precompute screen positions once — used for both lines and dots.
       let screen;
       if (this._viewMode === 'daily') {
         const max_days = this._viewHours / 24;
@@ -712,7 +821,7 @@ class PolarWindCard extends HTMLElement {
           const r = 1 - (daysAgo / max_days);
           return {
             ts: p.ts,
-            speed: p.speed,
+            color: p.color,
             day: d.getDate(),
             r,
             x: cx + r * max_radius * Math.cos(theta),
@@ -722,10 +831,10 @@ class PolarWindCard extends HTMLElement {
       } else {
         screen = points.map(p => {
           const r = (p.ts - t_start) / (t_now - t_start);
-          const theta = (p.bearing % 360) * Math.PI / 180;
+          const theta = _valueToTheta(p.angle, angleCfg.min, angleCfg.max, angleCfg.cyclic);
           return {
             ts: p.ts,
-            speed: p.speed,
+            color: p.color,
             r,
             x: cx + r * max_radius * Math.sin(theta),
             y: cy - r * max_radius * Math.cos(theta),
@@ -733,20 +842,25 @@ class PolarWindCard extends HTMLElement {
         });
       }
 
-      // Connecting lines first, so dots draw on top.
+      // Connecting lines first.
       ctx.lineWidth = 1;
       for (let i = 0; i < screen.length - 1; i++) {
         const a = screen[i];
         const b = screen[i + 1];
         if (a.r < 0 || a.r > 1 || b.r < 0 || b.r > 1) continue;
         if (this._viewMode === 'daily') {
-          // Skip lines that would cross midnight (different calendar day)
           if (a.day !== b.day) continue;
         } else {
           if (b.ts - a.ts > maxGap) continue;
         }
-        const c = speedToRgb((a.speed + b.speed) / 2);
-        ctx.strokeStyle = `rgba(${c.r}, ${c.g}, ${c.b}, 0.6)`;
+        let strokeStyle;
+        if (colorCfg && a.color != null && b.color != null) {
+          const c = _valueToRgb((a.color + b.color) / 2, colorCfg.palette);
+          strokeStyle = `rgba(${c.r}, ${c.g}, ${c.b}, 0.6)`;
+        } else {
+          strokeStyle = 'rgba(150,150,150,0.6)';
+        }
+        ctx.strokeStyle = strokeStyle;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
@@ -756,17 +870,18 @@ class PolarWindCard extends HTMLElement {
       // Dots on top.
       for (const p of screen) {
         if (p.r < 0 || p.r > 1) continue;
-        ctx.fillStyle = speedToColor(p.speed);
+        ctx.fillStyle = (colorCfg && p.color != null)
+          ? _valueToColorString(p.color, colorCfg.palette)
+          : 'rgb(150,150,150)';
         ctx.beginPath();
         ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // 5b. Max wind marker (drawn over dots so it stands out)
-      if (this._showMaxWind) {
-        const max = _findMaxPoint(screen);
+      // 5b. Max marker (only when there's a color sensor)
+      if (this._showMaxWind && colorCfg) {
+        const max = _findMaxColorPoint(screen);
         if (max && max.r >= 0 && max.r <= 1) {
-          // Pulse ring (animated, fades out as it grows from 10px to 18px)
           const phase = (performance.now() % 2000) / 2000;
           const pulseRadius = 10 + phase * 8;
           const pulseAlpha = 0.6 * (1 - phase);
@@ -776,33 +891,30 @@ class PolarWindCard extends HTMLElement {
           ctx.arc(max.x, max.y, pulseRadius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Static outer ring
           ctx.strokeStyle = 'rgba(255,255,255,0.9)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(max.x, max.y, 10, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Inner dot re-drawn on top of the ring, same color as the spiral
-          ctx.fillStyle = speedToColor(max.speed);
+          ctx.fillStyle = _valueToColorString(max.color, colorCfg.palette);
           ctx.beginPath();
           ctx.arc(max.x, max.y, 4, 0, Math.PI * 2);
           ctx.fill();
 
-          // Label "12.3 m/s" offset away from the nearest edge so it stays
-          // on-canvas and doesn't overlap the spiral center.
           const ringR = 10;
           const labelOffset = 14;
           const dx = (max.x < cx) ? +1 : -1;
           const dy = (max.y < cy) ? +1 : -1;
           const lx = max.x + dx * (ringR + labelOffset);
           const ly = max.y + dy * (ringR + labelOffset);
-          const valueDisplay = (max.speed * FROM_MS[unit]).toFixed(1);
+          const valueDisplay = this._formatColorValue(max.color, 1);
           ctx.font = 'bold 11px sans-serif';
           ctx.fillStyle = 'rgba(255,255,255,0.9)';
           ctx.textAlign = (max.x < cx) ? 'left' : 'right';
           ctx.textBaseline = (max.y < cy) ? 'top' : 'bottom';
-          ctx.fillText(`${valueDisplay} ${unitDisplay}`, lx, ly);
+          const lbl = unitDisplay ? `${valueDisplay} ${unitDisplay}` : valueDisplay;
+          ctx.fillText(lbl, lx, ly);
         }
       }
     }
@@ -813,47 +925,9 @@ class PolarWindCard extends HTMLElement {
     ctx.arc(cx, cy, 3, 0, Math.PI * 2);
     ctx.fill();
 
-    // 7. Legend (bottom-right) — vertical gradient bar with anchor ticks
-    const barWidth = 10;
-    const barHeight = Math.min(160, Math.max(80, size * 0.32));
-    const barRight = size - 8;
-    const barLeft = barRight - barWidth;
-    const barBottom = size - 8;
-    const barTop = barBottom - barHeight;
-
-    ctx.font = 'bold 11px sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`${t.legendTitle} (${unitDisplay})`, barRight, barTop - 4);
-
-    const grad = ctx.createLinearGradient(0, barTop, 0, barBottom);
-    grad.addColorStop(0.00, '#60a5fa');
-    grad.addColorStop(0.15, '#4ade80');
-    grad.addColorStop(0.40, '#facc15');
-    grad.addColorStop(0.70, '#fb923c');
-    grad.addColorStop(1.00, '#f87171');
-    ctx.fillStyle = grad;
-    ctx.fillRect(barLeft, barTop, barWidth, barHeight);
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(barLeft + 0.5, barTop + 0.5, barWidth - 1, barHeight - 1);
-
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    const maxAnchor = COLOR_STOPS[COLOR_STOPS.length - 1].v;
-    for (let i = 0; i < COLOR_STOPS.length; i++) {
-      const stop = COLOR_STOPS[i];
-      const frac = stop.v / maxAnchor;
-      const y = barTop + frac * barHeight;
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-      ctx.beginPath();
-      ctx.moveTo(barLeft - 3, y);
-      ctx.lineTo(barLeft, y);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillText(`${t.speedLabels[i]} ${msToDisplay(stop.v, unit)}`, barLeft - 5, y);
+    // 7. Legend (only if color sensor configured)
+    if (colorCfg) {
+      this._drawLegend(ctx, size);
     }
 
     // 8. Updated timestamp (bottom-left)
@@ -879,7 +953,7 @@ class PolarWindCard extends HTMLElement {
         : Math.round(this._viewHours);
       showingValue = `${hoursLabel}h`;
     }
-    ctx.fillText(`${t.showing}: ${showingValue} | ${this._config.num_points} ${t.points}`, 8, size - 6);
+    ctx.fillText(`${t.showing}: ${showingValue} | ${cfg.num_points} ${t.points}`, 8, size - 6);
 
     // 10. Loading / error overlay
     if (showLoading || showError) {
@@ -890,6 +964,129 @@ class PolarWindCard extends HTMLElement {
       ctx.fillText(showLoading ? t.loading : t.fetchError, cx, cy);
     }
   }
+
+  _drawAngleAxis(ctx, cx, cy, max_radius, angleCfg) {
+    const labels = angleCfg.labels;
+    const labelCount = angleCfg.label_count || 8;
+    let entries; // Array of { value, label }
+    if (labels && Object.keys(labels).length > 0) {
+      entries = Object.entries(labels).map(([k, v]) => ({ value: parseFloat(k), label: String(v) }));
+    } else {
+      entries = [];
+      const range = angleCfg.max - angleCfg.min;
+      if (angleCfg.cyclic) {
+        for (let i = 0; i < labelCount; i++) {
+          const v = angleCfg.min + (i / labelCount) * range;
+          entries.push({ value: v, label: this._formatAxisValue(v) });
+        }
+      } else {
+        for (let i = 0; i < labelCount; i++) {
+          const v = angleCfg.min + (i / (labelCount - 1)) * range;
+          entries.push({ value: v, label: this._formatAxisValue(v) });
+        }
+      }
+    }
+
+    // Lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    for (const e of entries) {
+      const theta = _valueToTheta(e.value, angleCfg.min, angleCfg.max, angleCfg.cyclic);
+      const x = cx + max_radius * Math.sin(theta);
+      const y = cy - max_radius * Math.cos(theta);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+
+    // Labels
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const labelRadius = max_radius + 14;
+    for (const e of entries) {
+      const theta = _valueToTheta(e.value, angleCfg.min, angleCfg.max, angleCfg.cyclic);
+      const x = cx + labelRadius * Math.sin(theta);
+      const y = cy - labelRadius * Math.cos(theta);
+      ctx.fillText(e.label, x, y);
+    }
+  }
+
+  _formatAxisValue(v) {
+    const n = Number(v);
+    if (!isFinite(n)) return String(v);
+    if (Math.abs(n - Math.round(n)) < 0.05) return String(Math.round(n));
+    return n.toFixed(1);
+  }
+
+  _drawLegend(ctx, size) {
+    const cfg = this._config;
+    const colorCfg = cfg.color;
+    const t = I18N[this._lang];
+    const unitDisplay = this._displayUnit();
+
+    const barWidth = 10;
+    const barHeight = Math.min(160, Math.max(80, size * 0.32));
+    const barRight = size - 8;
+    const barLeft = barRight - barWidth;
+    const barBottom = size - 8;
+    const barTop = barBottom - barHeight;
+
+    // Header
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    let headerText;
+    if (cfg._isLegacyWind) {
+      headerText = unitDisplay ? `${t.legendTitle} (${unitDisplay})` : t.legendTitle;
+    } else {
+      headerText = unitDisplay;
+    }
+    if (headerText) ctx.fillText(headerText, barRight, barTop - 4);
+
+    // Gradient bar
+    const grad = ctx.createLinearGradient(0, barTop, 0, barBottom);
+    const range = colorCfg.max - colorCfg.min;
+    for (const stop of colorCfg.palette) {
+      const frac = Math.min(1, Math.max(0, (stop.value - colorCfg.min) / range));
+      grad.addColorStop(frac, stop.color);
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(barLeft, barTop, barWidth, barHeight);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barLeft + 0.5, barTop + 0.5, barWidth - 1, barHeight - 1);
+
+    // Tick labels — use legend array if present, otherwise palette stops
+    const ticks = colorCfg.legend && colorCfg.legend.length > 0
+      ? colorCfg.legend
+      : colorCfg.palette.map(s => ({ value: s.value }));
+
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const tick of ticks) {
+      if (tick.value < colorCfg.min || tick.value > colorCfg.max) continue;
+      const frac = (tick.value - colorCfg.min) / range;
+      const y = barTop + frac * barHeight;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.beginPath();
+      ctx.moveTo(barLeft - 3, y);
+      ctx.lineTo(barLeft, y);
+      ctx.stroke();
+
+      let label = tick.label;
+      if (label == null && tick.labelIndex != null) {
+        label = t.speedLabels[tick.labelIndex];
+      }
+      const valueText = this._displayColorValueRounded(tick.value);
+      const text = label ? `${label} ${valueText}` : `${valueText}`;
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText(text, barLeft - 5, y);
+    }
+  }
 }
 
 customElements.define('polar-wind-card', PolarWindCard);
@@ -898,5 +1095,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'polar-wind-card',
   name: 'Polar Wind Card',
-  description: 'Wind history as a polar spiral (direction × time × speed)',
+  description: 'Polar time-spiral visualisation of any two HA sensors',
 });
