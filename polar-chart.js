@@ -36,13 +36,13 @@
  *       - { value: 0,   color: "#60a5fa" }
  *       - { value: 50,  color: "#facc15" }
  *       - { value: 100, color: "#f87171" }
+ *   refresh_interval: 10         # optional, minutes (>=1, default 10)
  *
  * No ha_url or ha_token needed — auth is handled via the Lovelace hass object.
  * Daily-pattern view is only available for legacy wind configs.
  * Wind-rose overlay is only shown when angle is a full 0–360 cyclic axis.
  */
 
-const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const CACHE_HORIZON_H = 168;
 
 // 10° gap at top for non-cyclic angle axes (between max and min endpoints)
@@ -238,6 +238,7 @@ function _normalizeConfig(config) {
       num_points: config.num_points,
       language: config.language,
       view_mode: config.view_mode,
+      refresh_interval: config.refresh_interval,
       _isLegacyWind: true,
       _legacySpeedUnitOverride: config.speed_unit,
     };
@@ -250,6 +251,7 @@ function _normalizeConfig(config) {
     num_points: config.num_points,
     language: config.language,
     view_mode: config.view_mode,
+    refresh_interval: config.refresh_interval,
     _isLegacyWind: false,
   };
 }
@@ -301,6 +303,19 @@ class PolarChart extends HTMLElement {
     cfg.num_points = Number(cfg.num_points) || 100;
     cfg.view_mode = view_mode;
 
+    if (cfg.refresh_interval !== undefined) {
+      const ri = Number(cfg.refresh_interval);
+      if (!isFinite(ri) || ri < 1) {
+        throw new Error(
+          `polar-chart: invalid refresh_interval "${cfg.refresh_interval}". ` +
+          `Must be a number >= 1 (minutes).`
+        );
+      }
+      cfg.refresh_interval = ri;
+    } else {
+      cfg.refresh_interval = 10;
+    }
+
     this._config = cfg;
     this._viewMode = view_mode;
     this._showMaxWind = false;
@@ -333,7 +348,8 @@ class PolarChart extends HTMLElement {
     this._applyI18n();
     this._applyButtonVisibility();
     this._startLoading();
-    this._interval = setInterval(() => this._invalidateAndFetch(), AUTO_REFRESH_MS);
+    const refreshMs = (this._config.refresh_interval || 10) * 60 * 1000;
+    this._interval = setInterval(() => this._invalidateAndFetch(), refreshMs);
   }
 
   connectedCallback() {

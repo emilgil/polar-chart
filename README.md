@@ -4,6 +4,12 @@ A Home Assistant Lovelace custom card that displays wind history as a polar spir
 Wind direction determines the angle, time determines the radius (center = oldest, edge = now),
 and wind speed determines the color of each data point.
 
+## Screenshots
+
+| Spiral, ~27h | Daily pattern, 48h | Full 7 days, 500 points |
+|---|---|---|
+| ![Spiral view](docs/screenshot-spiral.png) | ![Daily pattern view](docs/screenshot-daily.png) | ![7-day view](docs/screenshot-7day.png) |
+
 ## Features
 
 - **Polar spiral** visualization with compass rose
@@ -62,9 +68,59 @@ That's the minimum — everything else is optional.
 | `speed_unit`     | ❌       | auto-detect   | Override sensor unit. Allowed: `m/s`, `km/h`, `mph`, `knop` |
 | `language`       | ❌       | auto-detect   | UI language. Allowed: `sv`, `en`. Defaults to HA locale, falls back to `sv` |
 | `view_mode`      | ❌       | `spiral`      | Initial view: `spiral` or `daily` |
+| `refresh_interval` | ❌     | `10`          | Auto-refresh interval in minutes. Minimum `1` |
 
 The card uses the `hass` object that Lovelace already injects, so you don't need
 `ha_url` or `ha_token` in the config.
+
+## Generic config (any two sensors)
+
+The wind keys above (`bearing_sensor` / `speed_sensor`) are a shorthand. The card
+also accepts a generic form that works for any pair of sensors — angle determines
+the angular position, color is optional and determines the dot color via a
+configurable palette.
+
+```yaml
+type: custom:polar-chart
+angle:
+  sensor: sensor.x                # required
+  min: 0                          # required, value at angle 0
+  max: 360                        # required, value at full circle
+  cyclic: true                    # required, true if min and max are the same direction
+  labels:                         # optional, value → label map for compass labels
+    0: "N"
+    90: "E"
+    180: "S"
+    270: "W"
+color:                            # optional — omit for monochrome dots
+  sensor: sensor.y                # required if color block is present
+  min: 0                          # required, value at the bottom of the gradient
+  max: 100                        # required, value at the top
+  unit: "%"                       # optional, shown in legend header
+  palette:                        # required, at least 2 entries
+    - { value: 0,   color: "#60a5fa" }
+    - { value: 50,  color: "#facc15" }
+    - { value: 100, color: "#f87171" }
+  legend:                         # optional override for tick labels
+    - { value: 0,   label: "Low"  }
+    - { value: 50,  label: "Med"  }
+    - { value: 100, label: "High" }
+refresh_interval: 10              # optional, see table above
+```
+
+**Palette notes:**
+- Any number of stops ≥ 2 — colors interpolate smoothly between adjacent anchors.
+- Each stop becomes a tick mark on the legend (override with `legend:` if needed).
+- Values below the first stop are clamped to its color; values above the last
+  stop are clamped to the last color.
+
+**`cyclic` semantics:**
+- `cyclic: true` — the axis wraps (e.g. compass: 0° and 360° are the same direction).
+- `cyclic: false` — the axis is open-ended (e.g. 0–100% humidity), drawn with a
+  small gap at the top so min and max are visually distinct.
+
+The wind-rose overlay is only available for full 0–360 cyclic angle axes, and
+the daily-pattern view is only available for the legacy wind config.
 
 ## Color scale
 
