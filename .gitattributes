@@ -1,0 +1,3 @@
+# Normalise line endings to LF in the repository.
+# Prevents CRLF noise when working on a Windows/WSL filesystem.
+* text=auto eol=lf
